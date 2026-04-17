@@ -4,6 +4,8 @@ import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  const port = Number(process.env.PORT ?? 3000);
+  const host = process.env.HOST ?? '0.0.0.0';
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle('CafeF Crawlbot API')
@@ -14,6 +16,6 @@ async function bootstrap() {
   const openApiDocument = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('swagger', app, openApiDocument);
 
-  await app.listen(process.env.PORT ?? 3000);
+  await app.listen(port, host);
 }
 void bootstrap();

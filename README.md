@@ -116,6 +116,21 @@ $ npm run start:dev
 $ npm run start:prod
 ```
 
+## Run with Docker
+
+The Docker setup publishes the API on port `6969` and mounts the local `download/`
+folder into the container so downloaded PDFs remain on your machine.
+
+```bash
+docker compose up --build
+```
+
+After the container starts, open:
+
+- API base URL: `http://localhost:6969`
+- Swagger UI: `http://localhost:6969/swagger`
+- OpenAPI JSON: `http://localhost:6969/swagger-json`
+
 ## Run tests
 
 ```bash

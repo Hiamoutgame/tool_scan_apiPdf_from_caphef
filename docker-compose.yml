@@ -1,0 +1,15 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: scaning_and_saving
+    ports:
+      - "6969:6969"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 6969
+    volumes:
+      - ./download:/app/download
+    restart: unless-stopped
