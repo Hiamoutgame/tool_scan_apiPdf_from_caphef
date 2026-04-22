@@ -90,6 +90,55 @@ curl "http://localhost:3000/crawlbot/download-pdfs?company=acb&type=1&year=2025"
 - Downloads only PDF files
 - If `overwrite=false` and filename already exists, it auto-adds a suffix like `(1)`, `(2)`
 
+## OCR JSON to Markdown
+
+Use the local script below to convert an OCR JSON file into a Markdown file:
+
+```bash
+npm run ocr:md -- --input asset/a.json --output asset/a.md --overwrite
+```
+
+There is also an API endpoint:
+
+`GET /ocr/markdown?input=asset/a.json&output=asset/a.md&overwrite=true`
+
+## Supabase Storage
+
+The backend can upload a local file such as a generated `.md` or downloaded `.pdf`
+to Supabase Storage.
+
+### Environment variables
+
+Create a `.env` file from `.env.example` and set:
+
+- `SUPABASE_PROJECT_URL`
+- `SUPABASE_PUBLISHABLE_KEY` as the default key for this backend
+- `SUPABASE_SERVICE_ROLE_KEY` as an optional fallback
+- `SUPABASE_STORAGE_BUCKET`
+
+### API endpoint
+
+`POST /storage/upload-local`
+
+Example body:
+
+```json
+{
+  "localPath": "asset/a.md",
+  "remotePath": "ocr/a.md",
+  "upsert": true
+}
+```
+
+When using `SUPABASE_PUBLISHABLE_KEY`, Storage uploads must still be allowed by
+your Supabase Storage policies and bucket restrictions.
+
+### CLI upload
+
+```bash
+npm run storage:upload -- --local asset/a.md --remote ocr/a.md --upsert
+```
+
 ## Project setup
 
 ```bash
