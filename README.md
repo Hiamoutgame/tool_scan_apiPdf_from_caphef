@@ -118,16 +118,23 @@ Create a `.env` file from `.env.example` and set:
 
 ### API endpoint
 
-`POST /storage/upload-local`
+`POST /storage/upload`
 
-Example body:
+This endpoint accepts `multipart/form-data`.
 
-```json
-{
-  "localPath": "asset/a.md",
-  "remotePath": "ocr/a.md",
-  "upsert": true
-}
+Form fields:
+
+- `file` (required): the uploaded file
+- `file_path` (required): target path inside the bucket
+- `contentType` (optional): defaults to `application/pdf`
+
+Example form usage with `curl`:
+
+```bash
+curl -X POST "http://localhost:3000/storage/upload" \
+  -F "file=@asset/input-trang-1.pdf" \
+  -F "file_path=pdf/input-trang-1.pdf" \
+  -F "contentType=application/pdf"
 ```
 
 When using `SUPABASE_PUBLISHABLE_KEY`, Storage uploads must still be allowed by

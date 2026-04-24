@@ -7,9 +7,20 @@ export interface UploadLocalFileParams {
   contentType?: string;
 }
 
+export interface UploadIncomingFileParams {
+  file: {
+    buffer: Buffer;
+    originalname: string;
+    mimetype?: string;
+  };
+  filePath?: string;
+  contentType?: string;
+}
+
 export interface UploadLocalFileResponse {
   bucket: string;
   localPath: string;
+  sourceFileName?: string;
   remotePath: string;
   contentType: string;
   size: number;

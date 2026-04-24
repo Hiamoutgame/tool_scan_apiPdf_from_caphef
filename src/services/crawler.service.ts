@@ -233,20 +233,22 @@ export class CrawlerService {
 
   private getFileNameFromLinkOrName(
     link: string,
-    fallbackName: string,
+    reportName: string,
   ): string {
-    let fileName = '';
+    let fileName = this.normalizeReportName(reportName);
 
-    try {
-      const url = new URL(link);
-      fileName = decodeURIComponent(path.basename(url.pathname));
-    } catch {
-      const sanitizedLink = link.split('?')[0] ?? link;
-      fileName = path.basename(sanitizedLink);
+    if (!fileName) {
+      try {
+        const url = new URL(link);
+        fileName = decodeURIComponent(path.basename(url.pathname));
+      } catch {
+        const sanitizedLink = link.split('?')[0] ?? link;
+        fileName = path.basename(sanitizedLink);
+      }
     }
 
     if (!fileName || fileName === '.' || fileName === '/') {
-      fileName = fallbackName;
+      fileName = 'report';
     }
 
     let sanitizedName = this.sanitizeFileName(fileName);
@@ -260,6 +262,81 @@ export class CrawlerService {
     }
 
     return sanitizedName;
+  }
+
+  private normalizeReportName(reportName: string): string {
+    const trimmedName = (reportName ?? '').trim();
+    if (!trimmedName) {
+      return '';
+    }
+
+    return this.repairVietnameseMojibake(trimmedName);
+  }
+
+  private repairVietnameseMojibake(value: string): string {
+    if (!this.looksLikeVietnameseMojibake(value)) {
+      return value;
+    }
+
+    const bytes: number[] = [];
+    for (const char of value) {
+      const byte = this.windows1252ByteFromChar(char);
+      if (byte === null) {
+        return value;
+      }
+
+      bytes.push(byte);
+    }
+
+    const repaired = Buffer.from(bytes).toString('utf8');
+    return repaired.includes('\uFFFD') ? value : repaired;
+  }
+
+  private looksLikeVietnameseMojibake(value: string): boolean {
+    return /(?:Ã|Ä|áº|á»|Â|Æ|Ð)/.test(value);
+  }
+
+  private windows1252ByteFromChar(char: string): number | null {
+    const codePoint = char.codePointAt(0);
+    if (codePoint === undefined) {
+      return null;
+    }
+
+    if (codePoint <= 0xff) {
+      return codePoint;
+    }
+
+    const windows1252Characters: Record<string, number> = {
+      '€': 0x80,
+      '‚': 0x82,
+      'ƒ': 0x83,
+      '„': 0x84,
+      '…': 0x85,
+      '†': 0x86,
+      '‡': 0x87,
+      'ˆ': 0x88,
+      '‰': 0x89,
+      'Š': 0x8a,
+      '‹': 0x8b,
+      'Œ': 0x8c,
+      'Ž': 0x8e,
+      '‘': 0x91,
+      '’': 0x92,
+      '“': 0x93,
+      '”': 0x94,
+      '•': 0x95,
+      '–': 0x96,
+      '—': 0x97,
+      '˜': 0x98,
+      '™': 0x99,
+      'š': 0x9a,
+      '›': 0x9b,
+      'œ': 0x9c,
+      'ž': 0x9e,
+      'Ÿ': 0x9f,
+    };
+
+    return windows1252Characters[char] ?? null;
   }
 
   private sanitizeFileName(rawValue: string): string {

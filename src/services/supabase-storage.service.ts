@@ -8,9 +8,14 @@ import {
 } from '@nestjs/common';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {
+  UploadIncomingFileParams,
   UploadLocalFileParams,
   UploadLocalFileResponse,
 } from '../models/supabase-storage.types';
+
+const PDF_CONTENT_TYPE = 'application/pdf';
+const PDF_EXTENSION = '.pdf';
+const PDF_REMOTE_FOLDER = 'pdf';
 
 @Injectable()
 export class SupabaseStorageService {
@@ -40,29 +45,105 @@ export class SupabaseStorageService {
     const contentType =
       params.contentType ?? this.detectContentType(localPath, remotePath);
 
+    return this.uploadBufferToStorage({
+      bucket,
+      remotePath,
+      fileBuffer,
+      contentType,
+      upsert: params.upsert,
+      cacheControl: params.cacheControl,
+      localPath: this.toRelativePath(localPath),
+      sourceFileName: path.basename(localPath),
+    });
+  }
+
+  /**
+   * Uploads a file received directly from an HTTP multipart/form-data request.
+   *
+   * Why this shape:
+   * - Swagger and browser clients expect upload endpoints to accept a binary
+   *   `file` field instead of a JSON path on the server.
+   * - We keep this separate from `uploadLocalFile()` because the source is an
+   *   in-memory uploaded file, not something already stored on disk.
+   */
+  async uploadIncomingFile(
+    params: UploadIncomingFileParams,
+  ): Promise<UploadLocalFileResponse> {
+    if (!params.file?.buffer || params.file.buffer.byteLength === 0) {
+      throw new BadRequestException('Field "file" is required');
+    }
+
+    this.ensurePdfUpload(params.file.originalname, params.file.mimetype);
+
+    const bucket = this.resolveBucketName();
+    const remotePath = this.resolvePdfRemotePath(
+      params.file.originalname,
+      params.filePath,
+    );
+    const contentType = this.resolvePdfContentType(params.contentType);
+
+    return this.uploadBufferToStorage({
+      bucket,
+      remotePath,
+      fileBuffer: params.file.buffer,
+      contentType,
+      upsert: false,
+      localPath: 'uploaded-from-request',
+      sourceFileName: params.file.originalname,
+    });
+  }
+
+  /**
+   * Shared uploader used by both local-file uploads and multipart uploads.
+   *
+   * Why setup like this:
+   * - Both flows end the same way in Supabase: bucket + object path + file body.
+   * - Keeping the final upload step in one place avoids duplicated error
+   *   handling and keeps the response shape consistent.
+   */
+  private async uploadBufferToStorage(params: {
+    bucket: string;
+    remotePath: string;
+    fileBuffer: Buffer;
+    contentType: string;
+    upsert: boolean;
+    cacheControl?: string;
+    localPath: string;
+    sourceFileName?: string;
+  }): Promise<UploadLocalFileResponse> {
     const supabase = this.getSupabaseClient();
     const { data, error } = await supabase.storage
-      .from(bucket)
-      .upload(remotePath, fileBuffer, {
+      .from(params.bucket)
+      .upload(params.remotePath, params.fileBuffer, {
         upsert: params.upsert,
         cacheControl: params.cacheControl ?? '3600',
-        contentType,
+        contentType: params.contentType,
       });
 
     if (error) {
+      if (
+        params.contentType === PDF_CONTENT_TYPE &&
+        error.message.includes('mime type application/pdf is not supported')
+      ) {
+        throw new BadGatewayException(
+          `Supabase upload failed: bucket "${params.bucket}" is rejecting PDF uploads. Add "${PDF_CONTENT_TYPE}" to the bucket allowed MIME types in Supabase Storage settings.`,
+        );
+      }
+
       throw new BadGatewayException(`Supabase upload failed: ${error.message}`);
     }
 
     const {
       data: { publicUrl },
-    } = supabase.storage.from(bucket).getPublicUrl(remotePath);
+    } = supabase.storage.from(params.bucket).getPublicUrl(params.remotePath);
 
     return {
-      bucket,
-      localPath: this.toRelativePath(localPath),
-      remotePath,
-      contentType,
-      size: fileBuffer.byteLength,
+      bucket: params.bucket,
+      localPath: params.localPath,
+      sourceFileName: params.sourceFileName,
+      remotePath: params.remotePath,
+      contentType: params.contentType,
+      size: params.fileBuffer.byteLength,
       id: data.id,
       path: data.path,
       fullPath: data.fullPath,
@@ -183,6 +264,28 @@ export class SupabaseStorageService {
   }
 
   /**
+   * Resolves the Storage path for a file uploaded from an HTTP request.
+   *
+   * Why setup like this:
+   * - Multipart uploads do not have a stable local filesystem path.
+   * - When `remotePath` is omitted, the safest default is the uploaded file's
+   *   original name so the endpoint behaves like a normal file upload form.
+   */
+  private resolvePdfRemotePath(
+    originalFileName: string,
+    remotePath?: string,
+  ): string {
+    if (remotePath?.trim()) {
+      return this.normalizePdfStoragePath(remotePath);
+    }
+
+    const fallbackName = originalFileName?.trim() || `upload${PDF_EXTENSION}`;
+    return this.normalizePdfStoragePath(
+      `${PDF_REMOTE_FOLDER}/${path.basename(fallbackName)}`,
+    );
+  }
+
+  /**
    * Chooses the Storage bucket from request input or environment config.
    *
    * Why setup like this:
@@ -215,6 +318,28 @@ export class SupabaseStorageService {
       .replace(/\\/g, '/')
       .replace(/^\/+/, '')
       .replace(/\/{2,}/g, '/');
+  }
+
+  /**
+   * Forces request-uploaded PDFs into a stable `pdf/...` object path.
+   *
+   * Why setup like this:
+   * - Your current upload use case is PDF-first.
+   * - Prefixing with `pdf/` makes bucket contents easier to organize.
+   * - Ensuring the `.pdf` extension matches the actual upload type helps
+   *   Supabase infer the same MIME type we send explicitly.
+   */
+  private normalizePdfStoragePath(storagePath: string): string {
+    const normalizedPath = this.normalizeStoragePath(storagePath);
+    const prefixedPath = normalizedPath.startsWith(`${PDF_REMOTE_FOLDER}/`)
+      ? normalizedPath
+      : `${PDF_REMOTE_FOLDER}/${normalizedPath}`;
+
+    if (path.extname(prefixedPath).toLowerCase() === PDF_EXTENSION) {
+      return prefixedPath;
+    }
+
+    return `${prefixedPath}${PDF_EXTENSION}`;
   }
 
   /**
@@ -274,6 +399,60 @@ export class SupabaseStorageService {
       default:
         return 'application/octet-stream';
     }
+  }
+
+  /**
+   * Rejects non-PDF request uploads at the backend boundary.
+   *
+   * Why setup like this:
+   * - The current API is being used as a PDF upload endpoint.
+   * - Failing early here is clearer than letting a non-PDF file reach Storage
+   *   with a forced PDF path and content type.
+   */
+  private ensurePdfUpload(
+    originalFileName: string,
+    mimeType: string | undefined,
+  ): void {
+    const normalizedMimeType = mimeType?.trim().toLowerCase();
+    const normalizedExtension = path.extname(originalFileName).toLowerCase();
+
+    if (
+      normalizedMimeType === PDF_CONTENT_TYPE ||
+      normalizedExtension === PDF_EXTENSION
+    ) {
+      return;
+    }
+
+    throw new BadRequestException(
+      'Only PDF files are supported by this upload endpoint',
+    );
+  }
+
+  /**
+   * Lets callers override the outgoing Content-Type while keeping a safe PDF
+   * default for the current upload flow.
+   *
+   * Why setup like this:
+   * - You asked to keep the ability to manually send `contentType`.
+   * - If the field is omitted, PDF uploads still default to
+   *   `application/pdf`.
+   * - We only accept valid MIME syntax here so we do not send malformed
+   *   headers such as `pdf` or `text`.
+   */
+  private resolvePdfContentType(requestedContentType?: string): string {
+    const normalized = requestedContentType?.trim().toLowerCase();
+
+    if (!normalized) {
+      return PDF_CONTENT_TYPE;
+    }
+
+    if (!/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/i.test(normalized)) {
+      throw new BadRequestException(
+        'Field "contentType" must be a valid MIME type such as application/pdf',
+      );
+    }
+
+    return normalized;
   }
 
   /**

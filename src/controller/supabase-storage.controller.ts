@@ -1,25 +1,18 @@
-import {
-  BadRequestException,
-  Body,
-  Controller,
-  Post,
-} from '@nestjs/common';
+import { Body, Controller, UploadedFile, UseInterceptors, Post } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiBody,
+  ApiConsumes,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { UploadLocalFileResponse } from '../models/supabase-storage.types';
 import { SupabaseStorageService } from '../services/supabase-storage.service';
 
-interface UploadLocalFileBody {
-  localPath?: string;
-  remotePath?: string;
-  bucket?: string;
-  upsert?: boolean | string;
-  cacheControl?: string;
+interface UploadFileFormBody {
+  file_path?: string;
   contentType?: string;
 }
 
@@ -30,87 +23,52 @@ export class SupabaseStorageController {
     private readonly supabaseStorageService: SupabaseStorageService,
   ) {}
 
-  @Post('upload-local')
+  @Post('upload')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
   @ApiOperation({
-    summary: 'Upload a local file to Supabase Storage',
+    summary: 'Upload a PDF file to Supabase Storage',
     description:
-      'Reads a file from the local backend filesystem and uploads it to a Supabase Storage bucket.',
+      'Accepts a multipart/form-data PDF upload and sends the uploaded file to a Supabase Storage bucket.',
   })
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['localPath'],
+      required: ['file', 'file_path'],
       properties: {
-        localPath: {
+        file: {
           type: 'string',
-          example: 'asset/a.md',
+          format: 'binary',
         },
-        remotePath: {
+        file_path: {
           type: 'string',
-          example: 'ocr/a.md',
-        },
-        bucket: {
-          type: 'string',
-          example: 'Storage_PDF_MD_LumiFin',
-        },
-        upsert: {
-          type: 'boolean',
-          example: true,
-        },
-        cacheControl: {
-          type: 'string',
-          example: '3600',
+          example: 'pdf/cv-resume.pdf',
         },
         contentType: {
           type: 'string',
-          example: 'text/plain',
+          example: 'application/pdf',
         },
       },
     },
   })
   @ApiOkResponse({
-    description: 'File uploaded to Supabase Storage successfully.',
+    description: 'Uploaded request file sent to Supabase Storage successfully.',
   })
   @ApiBadRequestResponse({
-    description: 'Invalid request body or unreadable local file.',
+    description: 'Invalid upload form body or missing file.',
   })
-  async uploadLocal(
-    @Body() body: UploadLocalFileBody,
+  async upload(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: UploadFileFormBody,
   ): Promise<UploadLocalFileResponse> {
-    return this.supabaseStorageService.uploadLocalFile({
-      localPath: body.localPath ?? '',
-      remotePath: body.remotePath,
-      bucket: body.bucket,
-      upsert: this.parseBoolean(body.upsert, false),
-      cacheControl: body.cacheControl,
+    return this.supabaseStorageService.uploadIncomingFile({
+      file: {
+        buffer: file?.buffer,
+        originalname: file?.originalname ?? '',
+        mimetype: file?.mimetype,
+      },
+      filePath: body.file_path,
       contentType: body.contentType,
     });
-  }
-
-  private parseBoolean(
-    rawValue: boolean | string | undefined,
-    defaultValue: boolean,
-  ): boolean {
-    if (rawValue === undefined) {
-      return defaultValue;
-    }
-
-    if (typeof rawValue === 'boolean') {
-      return rawValue;
-    }
-
-    const normalized = rawValue.trim().toLowerCase();
-
-    if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) {
-      return true;
-    }
-
-    if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) {
-      return false;
-    }
-
-    throw new BadRequestException(
-      'Field "upsert" must be one of: true/false, 1/0, yes/no',
-    );
   }
 }
